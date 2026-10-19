@@ -1,0 +1,13 @@
+# Firmware binaries — do not commit
+*.bin
+*.iso
+*.BIN
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# OS
+.DS_Store
+Thumbs.db
