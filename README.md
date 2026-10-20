@@ -58,7 +58,7 @@ python3 tools/dpos_tool.py verify custom.iso
 ```
 
 4. Switch oscilloscope to USB storage mode (Menu → USB Connect)
-5. Copy `custom.iso` to root of the USB drive, rename to `DPOS350P-FNIRSI-2025619.iso`
+5. Copy `custom.iso` to root of the USB drive (any filename works — the updater scans for any `.iso` file)
 6. Safely eject and reboot — updater flashes automatically
 
 ---
