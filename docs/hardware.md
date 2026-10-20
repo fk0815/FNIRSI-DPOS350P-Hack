@@ -4,7 +4,10 @@
 
 ### Allwinner R11 / V3s (SoC)
 - ARM Cortex-A7; chip physically marked **R11**, identified as V3s-compatible via FEL ID=0x00168100
-- R11 and V3s appear to be the same silicon under different marketing names
+- R11 and V3s share the same core silicon (same die family: V3x/S3/S3L/R11) but differ in pin routing
+- R11 routes LCD and DVP/camera interfaces differently than V3s — display engine register maps may differ
+- R11 targets RTOS/UI frameworks (RT-Thread, Persimmon UI); V3s targets embedded Linux — consistent with FNIRSI's bare-metal approach
+- `xfel ddr v3s` works on R11 due to compatible DDR controller; U-Boot/Linux device trees require minor adjustments
 - RAM: DDR from 0x40000000, ~64MB
 - System clock: 1.152 GHz
 - Chip SID: `12c00001740046207905431c34490f50`
