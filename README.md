@@ -2,6 +2,16 @@
 
 Reverse engineering notes, tools and documentation for the **FNIRSI DPOS350P** 350 MHz / 1 GSa/s oscilloscope.
 
+## ⚠ Disclaimer
+
+This is experimental reverse engineering work. Modifying firmware carries the risk of **permanently damaging your device**. Everything here worked on one specific unit — it may not work on yours. Hardware revisions, firmware versions and individual components may differ.
+
+**Proceed at your own risk. The authors accept no responsibility for damaged, bricked or otherwise affected devices.**
+
+Always back up your Winbond NOR flash before making any changes.
+
+---
+
 **Status:** Custom firmware flash confirmed working ✅
 
 ![Custom boot logo running on DPOS350P](images/custom_logo_demo.jpg)
