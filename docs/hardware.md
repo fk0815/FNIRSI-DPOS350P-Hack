@@ -127,3 +127,58 @@ Bare-metal application — no Linux, no RTOS.
 | GT911_Init | 0x4003d454 |
 | CheckAndUpdateNewSystem | 0x40051cf0 |
 | FactoryCheck | 0x4003e708 |
+
+## Display
+
+| Parameter | Value | Source |
+|-----------|-------|--------|
+| Size | 7 inch | Product spec |
+| Resolution | 1024 × 600 px | Product spec (IPS) |
+| Interface | RGB565 parallel | SPL analysis |
+| Connector | 50-pin FFC | Physical inspection |
+| Touch | GT911 capacitive (separate smaller FFC) | PCB analysis |
+| Display module | HT070-RGB-50PIN-03 (HTdisplay) | Label on FFC cable |
+
+### Timing (from SPL timing table at 0x6720)
+
+| Parameter | Value |
+|-----------|-------|
+| H_ACTIVE | 1024 |
+| H_BP | 160 |
+| H_FP | 163 |
+| H_SYNC | 1 |
+| H_TOTAL | 1348 |
+| V_ACTIVE | 600 |
+| V_BP | 12 |
+| V_FP | 23 |
+| V_SYNC | 1 |
+| V_TOTAL | 636 |
+| PLL_VIDEO | 324 MHz (N=80, M=5) |
+| DCLK divisor | 8 → 40.5 MHz pixel clock |
+| Refresh rate | ~47 Hz |
+
+### DE2 configuration (working bare-metal setup)
+
+- **DE2 channel**: Channel 2 (MIXER_BASE + 0x4000)
+- **BLD_ROUTE**: 2 (pipe 0 → channel 2)
+- **Format**: RGB565 (attr = 0x0a01, no UI_SEL bit)
+- **Stride**: 2048 bytes (1024 × 2)
+- **Framebuffer**: 0x43000000 (1024×600×2 = 1,228,800 bytes)
+- **GLB_SIZE / BLD_OUTPUT_SIZE**: (599<<16)|1023 = active area 1024×600
+- **Channel size**: same as active area
+
+### Port D pinmux
+
+PD0-PD23 must be configured as LCD function (function 2) before TCON0 output:
+
+```c
+writel(0x22222222, PD_CFG0);  // PD0-PD7
+writel(0x22222222, PD_CFG1);  // PD8-PD15
+writel(0x22222222, PD_CFG2);  // PD16-PD23
+```
+
+### Boot logo
+
+The updater displays a 529×95px RGB565 logo centered on the 1024×600 display.
+Horizontal margins: (1024-529)/2 = 247px blue background on each side.
+
