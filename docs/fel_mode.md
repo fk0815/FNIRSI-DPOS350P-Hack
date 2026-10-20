@@ -44,7 +44,7 @@ xfel spinand
 # → ID=0xef401500 (Winbond W25N512GV)
 
 # Initialize DDR RAM
-xfel ddr v3s
+xfel ddr v3s  # v3s profile works for R11
 
 # Write binary to RAM
 xfel write 0x40000000 payload.bin

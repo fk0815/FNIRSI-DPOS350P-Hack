@@ -34,7 +34,7 @@ Always back up your Winbond NOR flash before making any changes.
 
 | Component | Part | Notes |
 |-----------|------|-------|
-| SoC | Allwinner V3s (ARM Cortex-A7) | Confirmed via FEL ID=0x00168100 |
+| SoC | Allwinner R11 / V3s (ARM Cortex-A7) | Confirmed via FEL ID=0x00168100 |
 | FPGA | GOWIN GW1N-LV9MG256C5/I5 | GW1N-9, BGA256, 8640 LUT |
 | SPI NOR | Winbond W25Q16JV | 2MB, SOP-8, bootloader + main app |
 | SPI NAND | Winbond W25N512GV | 64MB, WSON-8, FPGA bitstream |

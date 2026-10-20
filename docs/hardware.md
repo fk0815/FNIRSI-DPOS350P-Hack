@@ -2,8 +2,9 @@
 
 ## PCB Components
 
-### Allwinner V3s (SoC)
-- ARM Cortex-A7, confirmed via FEL (`xfel version` → ID=0x00168100)
+### Allwinner R11 / V3s (SoC)
+- ARM Cortex-A7; chip physically marked **R11**, identified as V3s-compatible via FEL ID=0x00168100
+- R11 and V3s appear to be the same silicon under different marketing names
 - RAM: DDR from 0x40000000, ~64MB
 - System clock: 1.152 GHz
 - Chip SID: `12c00001740046207905431c34490f50`
@@ -26,7 +27,7 @@
 - xfel detects as ID=0xef401500 but does not support read/write
 
 ### CSNP1GCR01-B0W (SD-NAND, 1GB)
-- LGA-8, SD protocol, connected to V3s SDC2 controller (PC0–PC3)
+- LGA-8, SD protocol, connected to SDC2 controller (PC0–PC3)
 - FAT32 filesystem
 - Holds firmware ISO during update process
 
