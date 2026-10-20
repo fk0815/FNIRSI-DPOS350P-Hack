@@ -1,232 +1,244 @@
 #!/usr/bin/env python3
 """
-DPOS350P firmware tool
-- extract_logo  : vytiahne bootovacie logo ako PNG
-- replace_logo  : vlozi vlastne PNG logo do .iso
-- info          : zobrazi info o iso subore
+dpos_tool.py — FNIRSI DPOS350P firmware utility
 
-Pouzitie:
-  python3 dpos_tool.py info        firmware.iso
-  python3 dpos_tool.py extract     firmware.iso logo_out.png
-  python3 dpos_tool.py replace     firmware.iso moje_logo.png custom.iso
+Supported commands:
+  info     <firmware.iso>                    — show ISO structure info
+  verify   <firmware.iso>                    — verify firmware checksum
+  patch    <firmware.iso> [output.iso]       — recompute and embed checksum
+  extract  <firmware.iso> <out.png>          — extract boot logo as PNG
+  replace  <firmware.iso> <logo.png> <out.iso> — replace boot logo and patch checksum
 
-Logo parametre:
-  Format   : RGB565, little-endian
-  Stride   : 793 pixelov (sirka riadku v datach)
-  Max vyska: ~63 riadkov (viac mozno zobrazi, neoverene)
-  Offset v .iso: 0x1000 + 64 bajtov hlavicka
-  Logo sa zobrazuje na modrom pozadi, ide o hornu cast obrazovky.
+Boot logo format (DPOS350P):
+  Pixel format : RGB565, little-endian
+  Dimensions   : 529 x 95 pixels (best current estimate — positioning still being investigated)
+  Block offset : 0x1000 in ISO (64-byte eGON header + pixel data)
 
-Bezpecnost:
-  - Tento nastroj meni LEN logo blok (0x1000-0x51000).
-  - ARM kod, FPGA, kalibracia a data su nedotknuté.
-  - Vzdy si zalohuj povodny .iso pred pouzitim!
-  - Verzia firmveru: DPOS350P-FNIRSI-2025619.iso
+Checksum algorithm:
+  Computed over iso[0x1000 : file_size-36] with relative indices.
+  9 x big-endian uint32 stored in the last 36 bytes of the ISO.
+  See docs/checksum.md for full details.
+
+WARNING:
+  Modifying firmware carries the risk of permanently damaging your device.
+  Always back up the original ISO and the Winbond NOR flash before proceeding.
+  Use at your own risk.
+
+Repository: https://github.com/mkubi/FNIRSI-DPOS350P-Hack
 """
 
-import sys, struct, shutil
+import sys
+import struct
+import shutil
 from pathlib import Path
 
-LOGO_OFFSET  = 0x1000        # zaciatok eGON.BMP bloku
-LOGO_HDR     = 64            # velkost hlavicky pred pixel datami
-LOGO_STRIDE  = 793           # pixelov na riadok (RGB565)
-LOGO_BLOCK   = 0x51000       # koniec logo bloku (zaciatok eGON.EXE)
-MODEL_SIG    = b'DPOS350P'   # podpis modelu na bajte 0
+# ── ISO layout constants ───────────────────────────────────────────────────────
+MODEL_SIG       = b'DPOS350P'   # 8-byte model signature at offset 0
+LOGO_OFFSET     = 0x001000      # start of eGON.BMP block
+LOGO_HDR        = 64            # eGON block header size (bytes)
+LOGO_BLOCK      = 0x051000      # end of logo block / start of eGON.EXE
+CHECKSUM_SIZE   = 36            # 9 x uint32 BE footer at end of file
 
-def check_iso(data):
-    if data[:8] != MODEL_SIG + b'\x00' * 0:
-        pass
-    if data[:8] != (MODEL_SIG + b'\x00'*8)[:8]:
-        if data[:8] != MODEL_SIG + b'\x00\x00\x00\x00\x00\x00\x00\x00':
-            pass
-    sig = data[:8]
-    if not sig.startswith(MODEL_SIG):
-        print('VAROVANIE: podpis modelu nekorektny:', sig)
-        return False
-    if b'eGON.BMP' not in data[0x1000:0x1010]:
-        print('VAROVANIE: eGON.BMP marker nenadeny na 0x1000')
-        return False
-    if b'eGON.EXE' not in data[0x51000:0x51010]:
-        print('VAROVANIE: eGON.EXE marker nenadeny na 0x51000')
-        return False
-    return True
-
-def cmd_info(iso_path):
-    data = open(iso_path,'rb').read()
-    ok = check_iso(data)
-    print(f'Subor     : {iso_path}')
-    print(f'Velkost   : {len(data)} bajtov ({len(data)//1024} kB)')
-    print(f'Platny    : {"ANO" if ok else "NIE - overte subor"}')
-    print(f'Model     : {data[:8].decode("latin1").rstrip(chr(0))}')
-    print()
-    print('Sekcie:')
-    print(f'  0x000000 - 0x001000 : hlavicka (podpis modelu)')
-    print(f'  0x001000 - 0x051000 : eGON.BMP (logo, RGB565 stride=793)')
-    print(f'  0x051000 - 0x0de000 : eGON.EXE (ARM aplikacia)')
-    print(f'  0x0de000 - 0x0e4f10 : datove tabulky')
-    print(f'  0x0e4f10 - koniec   : generatorova sekcia + USB deskriptory')
-    print()
-    # velkost logo pixel dat
-    logo_px = (LOGO_BLOCK - LOGO_OFFSET - LOGO_HDR) // 2
-    h = logo_px // LOGO_STRIDE
-    print(f'Logo      : {LOGO_STRIDE}x{h} px max (RGB565)')
-
-def cmd_extract(iso_path, out_png):
-    from PIL import Image
-    import numpy as np
-    data = open(iso_path,'rb').read()
-    if not check_iso(data):
-        print('Varovanie: subor moze byt neplatny, pokracujem...')
-    buf = data[LOGO_OFFSET + LOGO_HDR : LOGO_BLOCK]
-    stride = LOGO_STRIDE
-    npx = len(buf) // 2
-    h = npx // stride
-    arr = np.frombuffer(buf[:h*stride*2], dtype='<u2').reshape(h, stride)
-    # RGB565 -> RGB888
-    r = ((arr >> 11) & 0x1f) << 3
-    g = ((arr >> 5)  & 0x3f) << 2
-    b = (arr & 0x1f) << 3
-    rgb = np.stack([r,g,b], axis=2).astype(np.uint8)
-    img = Image.fromarray(rgb)
-    # orez na neprazdnu cast
-    rowsum = rgb.sum(axis=(1,2))
-    nz = np.where(rowsum > 0)[0]
-    if len(nz):
-        img = img.crop((0, nz.min(), stride, nz.max()+1))
-    img.save(out_png)
-    print(f'Logo extrahovane: {img.size[0]}x{img.size[1]} px -> {out_png}')
-
-def cmd_replace(iso_path, logo_png, out_iso):
-    from PIL import Image
-    import numpy as np
-    # nacitaj povodny iso
-    data = bytearray(open(iso_path,'rb').read())
-    if not check_iso(bytes(data)):
-        print('Varovanie: zdrojovy subor moze byt neplatny')
-    # nacitaj logo
-    img = Image.open(logo_png).convert('RGB')
-    w, h = img.size
-    if w > LOGO_STRIDE:
-        print(f'Logo je sirsi nez stride ({w} > {LOGO_STRIDE}), orezavam.')
-        img = img.crop((0,0,LOGO_STRIDE,h))
-        w = LOGO_STRIDE
-    arr = np.array(img)
-    r = (arr[:,:,0] >> 3).astype(np.uint16)
-    g = (arr[:,:,1] >> 2).astype(np.uint16)
-    b_c = (arr[:,:,2] >> 3).astype(np.uint16)
-    rgb565 = ((r << 11) | (g << 5) | b_c)
-    # poskladaj data: kazdy riadok ma presne LOGO_STRIDE pixelov
-    max_h = (LOGO_BLOCK - LOGO_OFFSET - LOGO_HDR) // (LOGO_STRIDE * 2)
-    if h > max_h:
-        print(f'Logo je vyssi nez max ({h} > {max_h}), orezavam.')
-        rgb565 = rgb565[:max_h,:]
-        h = max_h
-    # vytvor buffer: pad na plnu sirku stride, zvysok nuly
-    buf_size = LOGO_BLOCK - LOGO_OFFSET - LOGO_HDR
-    buf = bytearray(buf_size)
-    for y in range(h):
-        row = rgb565[y,:w].astype('<u2').tobytes()
-        dst = y * LOGO_STRIDE * 2
-        buf[dst:dst+len(row)] = row
-    # vloz do iso - pixel data
-    px_start = LOGO_OFFSET + LOGO_HDR
-    data[px_start : px_start + buf_size] = buf
-
-    # DOLEZITE: zachovaj magic oblast tesne pred eGON.EXE (0x50ff0-0x51000)
-    # Tato oblast obsahuje magic hodnotu 0xaa555a5a ktoru updater overuje.
-    # Ak ju vymazeme, updater odmietne .iso. Kopirujeme z povodneho suboru.
-    orig = open(iso_path, 'rb').read()
-    MAGIC_START = 0x50ff0
-    MAGIC_END   = LOGO_BLOCK           # = 0x51000
-    data[MAGIC_START:MAGIC_END] = orig[MAGIC_START:MAGIC_END]
-
-    # zapis
-    shutil.copy2(iso_path, out_iso) if out_iso != iso_path else None
-    with open(out_iso, 'wb') as f:
-        f.write(data)
-    print(f'Hotovo: {logo_png} ({w}x{h}) vlozene do {out_iso}')
-    print(f'Povodny subor: {iso_path} (nedotknuty)')
-    print()
-    print('UPOZORNENIE: vzdy si zalohuj povodny .iso pred nahratim do pristroja!')
-
-if __name__=='__main__':
-    if len(sys.argv) < 2 or sys.argv[1] not in ('info','extract','replace'):
-        print(__doc__)
-        sys.exit(1)
-    cmd = sys.argv[1]
-    if cmd == 'info' and len(sys.argv)==3:
-        cmd_info(sys.argv[2])
-    elif cmd == 'extract' and len(sys.argv)==4:
-        cmd_extract(sys.argv[2], sys.argv[3])
-    elif cmd == 'replace' and len(sys.argv)==5:
-        cmd_replace(sys.argv[2], sys.argv[3], sys.argv[4])
-    else:
-        print(__doc__)
-        sys.exit(1)
+# Boot logo pixel dimensions (529x95 confirmed working; exact framebuffer
+# layout still under investigation — logo appears slightly off-center)
+LOGO_WIDTH      = 529
+LOGO_HEIGHT     = 95
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# CHECKSUM — DPOS350P firmware update checksum (discovered 2026-10-19)
-# Algorithm: process iso[0x1000 : file_size-36] with relative indices,
-#            9× big-endian uint32 stored in last 36 bytes of ISO.
-# ──────────────────────────────────────────────────────────────────────────────
+# ── Checksum ──────────────────────────────────────────────────────────────────
 
 def compute_checksum(data: bytes) -> list[int]:
-    """Compute 9-value checksum over iso[0x1000:file_size-36].
-    data = raw ISO bytes (full file)."""
-    payload = data[0x1000 : len(data) - 36]
+    """
+    Compute the 9-value FNIRSI firmware checksum.
+
+    Input range: iso[0x1000 : file_size-36]
+    Indices are relative (start at 0).
+
+    checkdata[0] = sum of all bytes
+    checkdata[1] = sum of indices where (byte & 0x80)
+    checkdata[2] = sum of indices where (byte & 0x40)
+    ...
+    checkdata[8] = sum of indices where (byte & 0x01)
+
+    All values are masked to 32 bits.
+    """
+    payload = data[0x1000 : len(data) - CHECKSUM_SIZE]
     cd = [0] * 9
     for i, byte in enumerate(payload):
         cd[0] += byte
-        bf = 0x80
+        mask = 0x80
         for bit in range(1, 9):
-            if byte & bf:
+            if byte & mask:
                 cd[bit] += i
-            bf >>= 1
+            mask >>= 1
     return [v & 0xFFFFFFFF for v in cd]
 
 
 def patch_checksum(data: bytes) -> bytes:
-    """Recompute and write checksum footer into ISO bytes."""
-    import struct
+    """Recompute checksum and embed it in the last 36 bytes. Returns patched bytes."""
     cd = compute_checksum(data)
     footer = b"".join(struct.pack(">I", v) for v in cd)
-    assert len(footer) == 36
-    return data[:-36] + footer
+    return data[:-CHECKSUM_SIZE] + footer
 
 
 def verify_checksum(data: bytes) -> bool:
-    """Return True if ISO checksum is valid."""
-    import struct
-    stored = [struct.unpack_from(">I", data, len(data) - 36 + i * 4)[0]
-              for i in range(9)]
-    computed = compute_checksum(data)
-    return computed == stored
+    """Return True if the ISO checksum footer is valid."""
+    stored = [
+        struct.unpack_from(">I", data, len(data) - CHECKSUM_SIZE + i * 4)[0]
+        for i in range(9)
+    ]
+    return compute_checksum(data) == stored
+
+
+# ── ISO validation ─────────────────────────────────────────────────────────────
+
+def check_iso(data: bytes) -> bool:
+    """Basic sanity check — verify model signature and eGON block markers."""
+    ok = True
+    if not data[:8].startswith(MODEL_SIG):
+        print(f"WARNING: unexpected model signature: {data[:8]}")
+        ok = False
+    if b'eGON.BMP' not in data[LOGO_OFFSET : LOGO_OFFSET + 16]:
+        print(f"WARNING: eGON.BMP marker not found at 0x{LOGO_OFFSET:06x}")
+        ok = False
+    if b'eGON.EXE' not in data[LOGO_BLOCK : LOGO_BLOCK + 16]:
+        print(f"WARNING: eGON.EXE marker not found at 0x{LOGO_BLOCK:06x}")
+        ok = False
+    return ok
+
+
+# ── Commands ───────────────────────────────────────────────────────────────────
+
+def cmd_info(iso_path: str):
+    """Print ISO structure information."""
+    data = open(iso_path, "rb").read()
+    check_iso(data)
+    cs_ok = verify_checksum(data)
+    print(f"File     : {iso_path}")
+    print(f"Size     : {len(data)} bytes ({len(data) / 1024:.1f} kB)")
+    print(f"Model    : {data[:8].rstrip(b'\\x00').decode('latin1')}")
+    print(f"Checksum : {'OK' if cs_ok else 'INVALID'}")
+    print()
+    print("Known sections:")
+    print(f"  0x000000 – 0x001000  header (model signature + padding)")
+    print(f"  0x001000 – 0x051000  eGON.BMP (boot logo, RGB565 LE, {LOGO_WIDTH}x{LOGO_HEIGHT}px)")
+    print(f"  0x051000 – 0x0e4f10  eGON.EXE (main ARM application)")
+    print(f"  0x0e4f10 – 0x0e7832  data tables (waveforms, USB descriptors)")
+    print(f"  0x0e7832 – EOF       checksum footer (9x uint32 BE, 36 bytes)")
+
+
+def cmd_verify(iso_path: str):
+    """Verify firmware checksum."""
+    data = open(iso_path, "rb").read()
+    ok = verify_checksum(data)
+    print(f"Checksum: {'OK' if ok else 'INVALID'}")
+    sys.exit(0 if ok else 1)
+
+
+def cmd_patch(iso_path: str, out_path: str = None):
+    """Recompute and embed checksum footer."""
+    if out_path is None:
+        out_path = iso_path.replace(".iso", "_patched.iso")
+    data = open(iso_path, "rb").read()
+    patched = patch_checksum(data)
+    open(out_path, "wb").write(patched)
+    print(f"Checksum patched → {out_path}")
+
+
+def cmd_extract(iso_path: str, out_png: str):
+    """Extract boot logo from ISO as PNG."""
+    try:
+        from PIL import Image
+        import numpy as np
+    except ImportError:
+        print("ERROR: Pillow and numpy required: pip install pillow numpy")
+        sys.exit(1)
+
+    data = open(iso_path, "rb").read()
+    check_iso(data)
+
+    # Read pixel data from logo block (skip 64-byte eGON header)
+    raw = data[LOGO_OFFSET + LOGO_HDR : LOGO_BLOCK]
+    total_px = len(raw) // 2
+    h = min(LOGO_HEIGHT, total_px // LOGO_WIDTH)
+
+    arr = (
+        np.frombuffer(raw[: h * LOGO_WIDTH * 2], dtype="<u2")
+        .reshape(h, LOGO_WIDTH)
+    )
+    # Decode RGB565 → RGB888
+    r = ((arr >> 11) & 0x1F) * 255 // 31
+    g = ((arr >>  5) & 0x3F) * 255 // 63
+    b = ( arr        & 0x1F) * 255 // 31
+    rgb = np.stack([r, g, b], axis=2).astype(np.uint8)
+
+    img = Image.fromarray(rgb)
+    img.save(out_png)
+    print(f"Logo extracted: {img.width}x{img.height}px → {out_png}")
+
+
+def cmd_replace(iso_path: str, logo_png: str, out_iso: str):
+    """Replace boot logo in ISO and recompute checksum."""
+    try:
+        from PIL import Image
+        import numpy as np
+    except ImportError:
+        print("ERROR: Pillow and numpy required: pip install pillow numpy")
+        sys.exit(1)
+
+    data = bytearray(open(iso_path, "rb").read())
+    check_iso(bytes(data))
+
+    # Load and resize logo to target dimensions
+    img = Image.open(logo_png).convert("RGB").resize(
+        (LOGO_WIDTH, LOGO_HEIGHT), Image.LANCZOS
+    )
+    arr = np.array(img, dtype=np.uint16)
+    r   = (arr[:, :, 0] >> 3) & 0x1F
+    g   = (arr[:, :, 1] >> 2) & 0x3F
+    b   = (arr[:, :, 2] >> 3) & 0x1F
+    rgb565 = ((r << 11) | (g << 5) | b).astype(np.uint16)
+
+    # Build pixel buffer — pad remaining space with zeros
+    buf_size = LOGO_BLOCK - LOGO_OFFSET - LOGO_HDR
+    buf = bytearray(buf_size)
+    pixel_bytes = rgb565.tobytes()
+    buf[: len(pixel_bytes)] = pixel_bytes
+
+    # Write pixel data into ISO (preserve eGON header)
+    px_start = LOGO_OFFSET + LOGO_HDR
+    data[px_start : px_start + buf_size] = buf
+
+    # Recompute and embed checksum
+    patched = patch_checksum(bytes(data))
+    open(out_iso, "wb").write(patched)
+
+    cs_ok = verify_checksum(patched)
+    print(f"Logo replaced : {logo_png} ({LOGO_WIDTH}x{LOGO_HEIGHT}px)")
+    print(f"Output        : {out_iso}")
+    print(f"Checksum      : {'OK' if cs_ok else 'ERROR — something went wrong'}")
+    print()
+    print("WARNING: Always back up the original ISO and Winbond NOR flash")
+    print("         before flashing to the device. Proceed at your own risk.")
+
+
+# ── Entry point ────────────────────────────────────────────────────────────────
+
+def usage():
+    print(__doc__)
+    sys.exit(1)
 
 
 if __name__ == "__main__":
-    import sys, os
+    if len(sys.argv) < 2:
+        usage()
 
-    cmd = sys.argv[1] if len(sys.argv) > 1 else "help"
+    cmd = sys.argv[1]
+    args = sys.argv[2:]
 
-    if cmd == "verify" and len(sys.argv) == 3:
-        data = open(sys.argv[2], "rb").read()
-        ok = verify_checksum(data)
-        print(f"Checksum: {'OK' if ok else 'INVALID'}")
-        sys.exit(0 if ok else 1)
-
-    elif cmd == "patch" and len(sys.argv) in (3, 4):
-        src = sys.argv[2]
-        dst = sys.argv[3] if len(sys.argv) == 4 else src.replace(".iso", "_patched.iso")
-        data = open(src, "rb").read()
-        patched = patch_checksum(data)
-        open(dst, "wb").write(patched)
-        print(f"Patched → {dst}")
-
-    else:
-        print("Usage:")
-        print("  dpos_tool.py verify  <file.iso>")
-        print("  dpos_tool.py patch   <file.iso> [output.iso]")
-        print("  dpos_tool.py info    <file.iso>")
-        print("  dpos_tool.py extract <file.iso> <section> <out>")
-        print("  dpos_tool.py replace <file.iso> <section> <in> <out>")
+    if   cmd == "info"    and len(args) == 1: cmd_info(*args)
+    elif cmd == "verify"  and len(args) == 1: cmd_verify(*args)
+    elif cmd == "patch"   and len(args) in (1, 2): cmd_patch(*args)
+    elif cmd == "extract" and len(args) == 2: cmd_extract(*args)
+    elif cmd == "replace" and len(args) == 3: cmd_replace(*args)
+    else: usage()
