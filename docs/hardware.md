@@ -128,6 +128,19 @@ Bare-metal application — no Linux, no RTOS.
 | CheckAndUpdateNewSystem | 0x40051cf0 |
 | FactoryCheck | 0x4003e708 |
 
+
+### GT911 touch controller pinout
+
+Confirmed by PCB continuity tracing and original firmware analysis:
+
+| Signal | R11 pin |
+|--------|---------|
+| SDA | PG6 |
+| SCL | PG7 |
+| INT | PE22 |
+| RST | PE24 |
+| I2C address | 0x5D |
+
 ## Display
 
 | Parameter | Value | Source |
@@ -136,7 +149,7 @@ Bare-metal application — no Linux, no RTOS.
 | Resolution | 1024 × 600 px | Product spec (IPS) |
 | Interface | RGB565 parallel | SPL analysis |
 | Connector | 50-pin FFC | Physical inspection |
-| Touch | GT911 capacitive (separate smaller FFC) | PCB analysis |
+| Touch | GT911 capacitive (separate smaller FFC) | PCB continuity tracing |
 | Display module | HT070-RGB-50PIN-03 (HTdisplay) | Label on FFC cable |
 
 ### Timing (from SPL timing table at 0x6720)

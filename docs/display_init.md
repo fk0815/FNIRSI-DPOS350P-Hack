@@ -1,6 +1,7 @@
 # Display Initialization (Bare-metal)
 
-Working bare-metal display init for FNIRSI DPOS350P (Allwinner R11/V3s).
+Working bare-metal display and touch driver for FNIRSI DPOS350P (Allwinner R11/V3s).
+See `tools/dpos_drivers/` for the complete modular implementation.
 
 ## Display specs
 
@@ -9,7 +10,7 @@ Working bare-metal display init for FNIRSI DPOS350P (Allwinner R11/V3s).
 | Module | HT070-RGB-50PIN-03 (HTdisplay) |
 | Resolution | **1024 × 600** (IPS) |
 | Interface | RGB565 parallel, 50-pin FFC |
-| Touch | GT911 capacitive (separate smaller FFC) |
+| Touch | GT911 capacitive, separate smaller FFC |
 
 ## Timing (from SPL timing table at Winbond 0x6720)
 
@@ -21,81 +22,85 @@ Working bare-metal display init for FNIRSI DPOS350P (Allwinner R11/V3s).
 | Sync width | 1 | 1 |
 | **Total** | **1348** | **636** |
 
-PLL_VIDEO = 324 MHz (N=80, M=5) · DCLK = 324/8 = **40.5 MHz** · ~47 fps
+PLL_VIDEO = 324 MHz (N=80, M=5) · DCLK = 324/8 = **40.5 MHz**
 
-## Init sequence
+## Port D pinmux
 
-### 1. Port D pinmux (LCD function)
+PD pins 1–21 (excluding PD12) set to LCD function (function 2):
 
 ```c
-writel(0x22222222, 0x01C2086C);  // PD_CFG0: PD0-PD7
-writel(0x22222222, 0x01C20870);  // PD_CFG1: PD8-PD15
-writel(0x22222222, 0x01C20874);  // PD_CFG2: PD16-PD23
+for (pin = 1; pin <= 21; pin++)
+    if (pin != 12)
+        gpio_set_function(GPIO_PORT_D, pin, 2);
 ```
 
-### 2. CCU clocks
+## GT911 touch controller
 
-```c
-// PLL_VIDEO = 24*(N+1)/(M+1) = 324 MHz
-CCU_PLL_VIDEO_CTRL = (1<<31)|(1<<24)|(80<<8)|(5<<0);
-while (!(CCU_PLL_VIDEO_CTRL & (1<<28)));
+Hardware mapping confirmed by PCB continuity tracing and original firmware analysis:
 
-CCU_DE_CLK    = (1<<31)|(0<<24)|(0<<0);  // source=PLL_VIDEO
-CCU_TCON0_CLK = (1<<31)|(0<<24)|(0<<0);
-CCU_BUS_SOFT_RST1 |= (1<<12)|(1<<4);     // de-assert DE+TCON0 reset
-CCU_BUS_CLK_GATE1 |= (1<<12)|(1<<4);     // enable DE+TCON0 AHB clocks
+| Signal | Pin |
+|--------|-----|
+| SDA | PG6 |
+| SCL | PG7 |
+| INT | PE22 |
+| RST | PE24 |
+| I2C address | 0x5D (write 0xBA / read 0xBB) |
+
+Uses bit-banged I2C. Status register: `0x814E`, first touch point: `0x8150`.
+
+## Framebuffers
+
+Double-buffered to eliminate tearing. D-cache must be flushed before each swap
+since DE2 reads directly from physical DRAM while the ARM CPU caches writes.
+
+```
+FB0 = 0x43000000   (1024 × 600 × 2 = 1,228,800 bytes)
+FB1 = 0x43200000
 ```
 
-### 3. DE2 internal CCU
+`display_swap()` updates the DE2 layer address atomically and flips the buffers.
+
+## CCU setup
 
 ```c
-DE2_CCU_RST      &= ~1;   // assert Mixer0 reset
-DE2_CCU_BUS_GATE |=  1;   // Mixer0 bus clock on
-DE2_CCU_GATE     |=  1;   // Mixer0 module clock on
-DE2_CCU_RST      |=  1;   // de-assert reset
-DE2_CCU_SEL       =  0;   // Mixer0 → TCON0
+// PLL_VIDEO = 24*(N+1)/(M+1) = 24*81/6 = 324 MHz
+CCU_PLL_VIDEO_CTRL = (1<<31)|(1<<24)|(80<<8)|5;
+CCU_DE_CLK    = (1<<31);   // source = PLL_VIDEO, M=0
+CCU_TCON0_CLK = (1<<31);
+CCU_BUS_SOFT_RST1 |= (1<<12)|(1<<4);   // DE + TCON0
+CCU_BUS_CLK_GATE1 |= (1<<12)|(1<<4);
 ```
 
-### 4. DE2 Mixer
+## DE2 setup
 
 ```c
-#define ACTIVE ((600-1)<<16|(1024-1))   // = 0x025703FF
+// DE2 internal CCU: reset → enable clocks → release
+// Mixer channel 2 (MIXER_BASE + 0x4000):
+CH2[0x00] = 0x00000A01;  // RGB565, enable
+CH2[0x04] = (599<<16)|1023;  // size: 1024×600
+CH2[0x08] = 0;               // coord: (0,0)
+CH2[0x0C] = 2048;            // stride: 1024*2 bytes
+CH2[0x10] = front_address;   // framebuffer
+CH2[0x88] = (599<<16)|1023;  // ovl_size
 
-// Global
-GLB_SIZE = ACTIVE;   // mixer output = 1024×600
-GLB_CTL  = 1;
-
-// Blender
-BLD_PIPE_CTL   |= (1<<8);               // enable pipe 0
-BLD_ROUTE_CTL   = (BLD_ROUTE_CTL & ~0xF) | 2;  // pipe 0 → channel 2
-BLD_OUTPUT_SIZE = ACTIVE;
-BLD_MODE0       = 0x03010301;
-
-// Channel 2 (MIXER_BASE + 0x4000)
-CH2[0x00] = 0x0a01;       // attr: RGB565, enable (format=10, no UI_SEL)
-CH2[0x04] = ACTIVE;       // size: 1024×600
-CH2[0x08] = 0;            // coord: (0, 0)
-CH2[0x0C] = 2048;         // stride: 1024 * 2 bytes
-CH2[0x10] = 0x43000000;   // framebuffer address
-CH2[0x88] = ACTIVE;       // ovl_size
-
-GLB_DBUFF = 1;            // commit
+// Blender route: pipe 0 → channel 2
+BLD_BASE[0x80] = 2;
+BLD_BASE[0x00] = (1<<8);          // pipe 0 enable
+BLD_BASE[0x04] = 0xFF000000;      // fill color (opaque black)
+BLD_BASE[0x08] = (599<<16)|1023;  // pipe 0 insize
+BLD_BASE[0x8C] = (599<<16)|1023;  // output size
 ```
 
-### 5. TCON0
+## TCON0 setup
 
 ```c
-TCON_CTRL           = 0;
-TCON_INT0           = 0;
-TCON0_CTRL          = (1<<31)|(30<<4);    // enable, clk_delay=30
-TCON0_DCLK          = (0xF<<28)|(8<<0);   // enable, 324/8=40.5 MHz
-TCON0_TIMING_ACTIVE = ACTIVE;             // 1024×600
-TCON0_TIMING_H      = (1347<<16)|160;     // HTotal-1, HBP+HSW-1
-TCON0_TIMING_V      = (635<<16)|12;       // VTotal-1, VBP+VSW-1
-TCON0_TIMING_SYNC   = 0;                  // HSW=1, VSW=1
-TCON0_IO_POLARITY   = 0;
+TCON0_DCLK          = (0xF<<28) | 8;         // 324/8 = 40.5 MHz
+TCON0_TIMING_ACTIVE = (599<<16) | 1023;       // 1024×600
+TCON0_TIMING_H      = (1347<<16) | (163+1-1); // HTotal-1 | HFP+HSW-1
+TCON0_TIMING_V      = (636<<17)  | (23+1-1);  // VTotal*2 | VFP+VSW-1
+TCON0_TIMING_SYNC   = (0<<16)    | 0;         // VSW-1 | HSW-1
+TCON0_IO_POLARITY   = 0x17000000;
 TCON0_IO_TRI        = 0;
-TCON_CTRL           = (1<<31);            // enable TCON
 ```
 
 ## Register map
@@ -115,7 +120,7 @@ MIXER_BASE       = 0x01100000
   GLB_SIZE       = +0x000C
   BLD_PIPE_CTL   = +0x1000   BLD_ROUTE_CTL = +0x1080
   BLD_OUTPUT_SIZE= +0x108C   BLD_MODE0     = +0x1090
-  CH2_BASE       = +0x4000   (attr/size/coord/stride/laddr at +0/4/8/C/10, ovl at +0x88)
+  CH2_BASE       = +0x4000
 
 TCON0_BASE       = 0x01C0C000
   TCON_CTRL      = +0x000    TCON0_CTRL    = +0x040
@@ -125,10 +130,6 @@ TCON0_BASE       = 0x01C0C000
   TCON0_IO_TRI   = +0x08C
 
 PIO_BASE         = 0x01C20800
-  PD_CFG0        = +0x6C     PD_CFG1       = +0x70
-  PD_CFG2        = +0x74
+  PORT_B = +0x24  PORT_C = +0x48  PORT_D = +0x6C
+  PORT_E = +0x90  PORT_G = +0xD8
 ```
-
-## Full example
-
-See `tools/hello_dpos/` — complete working bare-metal demo (solid color cycling).
