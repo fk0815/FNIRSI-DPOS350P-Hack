@@ -85,7 +85,7 @@ images/
 
 - Checksum algorithm identified with help from **pecostm32**'s
   [FNIRSI 1013D/1014D reverse engineering](https://github.com/pecostm32/FNIRSI-1013D-1014D-Hack)
-- Discussion: [EEVBlog forum thread](https://www.eevblog.com/forum/testgear/hacking-the-dso2x1x/)
+- Discussion: [EEVBlog forum thread](https://www.eevblog.com/forum/testgear/fnirsi-dpos350p-reverse-engineering-custom-firmware/) *(link to be updated once thread is posted)*
 
 ---
 
