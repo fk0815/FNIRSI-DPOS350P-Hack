@@ -11,7 +11,7 @@ Supported commands:
 
 Boot logo format (DPOS350P):
   Pixel format : RGB565, little-endian
-  Dimensions   : 529 x 95 pixels (best current estimate — positioning still being investigated)
+  Dimensions   : 529 x 95 pixels (confirmed boot-logo payload)
   Block offset : 0x1000 in ISO (64-byte eGON header + pixel data)
 
 Checksum algorithm:
@@ -39,8 +39,8 @@ LOGO_HDR        = 64            # eGON block header size (bytes)
 LOGO_BLOCK      = 0x051000      # end of logo block / start of eGON.EXE
 CHECKSUM_SIZE   = 36            # 9 x uint32 BE footer at end of file
 
-# Boot logo pixel dimensions (529x95 confirmed working; exact framebuffer
-# layout still under investigation — logo appears slightly off-center)
+# Boot logo payload dimensions confirmed on the DPOS350P.
+# Final on-screen placement is controlled by the original FNIRSI boot code.
 LOGO_WIDTH      = 529
 LOGO_HEIGHT     = 95
 

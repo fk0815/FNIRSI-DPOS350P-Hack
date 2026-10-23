@@ -46,7 +46,9 @@ Image dimensions:     529 × 95 pixels
 Remaining space:      zero-padded to end of block
 ```
 
-The logo is displayed centered on the 1024×600 display with the device's blue background filling the sides.
+The physical display is 1024×600. The 529×95 logo payload is displayed
+during the original boot/SPL stage; its final on-screen placement is
+controlled by the original FNIRSI boot code.
 
 **Encoding example (Python):**
 
