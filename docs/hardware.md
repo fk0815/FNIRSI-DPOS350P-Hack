@@ -94,6 +94,8 @@ A nearby 2x3 header is believed to expose GOWIN JTAG signals, but package-pin cl
 
 Not UART. Current captures show two-wire I2C-like activity during normal operation. See the unmarked-device section above.
 
+Firmware reference: the R11 bit-bangs an I2C master on PE20 (SCL) / PE21 (SDA) to device 0x60 - the MS5351M clock generator, programmed at boot (95 MHz + 10 MHz from the main app, 125 MHz from the updater). Whether this header carries that bus or a separate FPGA-side bus is unresolved; the captured address-0 decode does not match 0x60.
+
 ## Original EXE2 startup flow
 
 Confirmed call sequence around the application startup:
