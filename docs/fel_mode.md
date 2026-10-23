@@ -39,9 +39,11 @@ xfel spinor read 0 0x200000 winbond_backup.bin
 # Write to Winbond (careful!)
 xfel spinor write 0x58000 new_logo_section.bin
 
-# Detect SPI NAND (FPGA flash — read not supported by xfel)
+# Caution: this does not prove that a separate SPI NAND exists
 xfel spinand
-# → ID=0xef401500 (Winbond W25N512GV)
+# On the tested setup this reports bytes matching the W25Q16JV NOR ID.
+# Treat the result as a command-path artefact until a second device is
+# identified electrically and by an independent ID transaction.
 
 # Initialize DDR RAM
 xfel ddr v3s  # v3s profile works for R11
@@ -63,14 +65,12 @@ xfel hexdump 0x40000000 0x40
 | 0x400234d8 | "DPOS350P" string (updater) |
 | 0x48000000 | ISO written here during FEL experiments |
 
-## SDC2 Controller
+## SDC0 Controller
 
-The SD-NAND (CSNP1GCR01-B0W) is on the SDC2 controller at `0x01C11000`.  
-In FEL mode this register reads `0x00000000` — SDC2 is not initialized.  
-Accessing SD-NAND from FEL requires a custom ARM payload to initialize SDC2.
+The managed NAND (`CSNP1GCR01-B0W`) is confirmed on SDC0 at `0x01C0F000`, routed through PF0..PF5. FEL does not initialize this controller for filesystem access. A custom ARM payload or the custom boot environment is required to initialize SDC0 and perform SD commands.
 
 ## Notes
 
-- The `xfel spinand` command detects the W25N512GV but cannot read or write it
+- Do not interpret `xfel spinand` output as proof of a W25N512GV; the observed bytes match the confirmed W25Q16JV NOR ID
 - The 4-pin header on the PCB does **not** appear to be UART (see hardware.md)
 - UART0 (PB8/PB9, chip pins 54/55) is not broken out to any header

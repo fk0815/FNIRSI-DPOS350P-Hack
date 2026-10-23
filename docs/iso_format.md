@@ -46,7 +46,7 @@ Image dimensions:     529 × 95 pixels
 Remaining space:      zero-padded to end of block
 ```
 
-The logo is displayed centered on the 800×480 display with the device's blue background filling the sides.
+The logo is displayed centered on the 1024×600 display with the device's blue background filling the sides.
 
 **Encoding example (Python):**
 
@@ -65,7 +65,7 @@ pixel_bytes = rgb565.tobytes()  # little-endian, ready to write
 
 ## Checksum Footer
 
-The last 36 bytes of the ISO file are the checksum footer.  
+The last 36 bytes of the ISO file are the checksum footer.
 See [checksum.md](checksum.md) for the full algorithm.
 
 ```

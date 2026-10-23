@@ -1,197 +1,139 @@
 # Hardware
 
-## PCB Components
+This document separates confirmed findings from open hypotheses.
 
-### Allwinner R11 / V3s (SoC)
-- ARM Cortex-A7; chip physically marked **R11**, identified as V3s-compatible via FEL ID=0x00168100
-- R11 and V3s share the same core silicon (same die family: V3x/S3/S3L/R11) but differ in pin routing
-- R11 routes LCD and DVP/camera interfaces differently than V3s — display engine register maps may differ
-- R11 targets RTOS/UI frameworks (RT-Thread, Persimmon UI); V3s targets embedded Linux — consistent with FNIRSI's bare-metal approach
-- `xfel ddr v3s` works on R11 due to compatible DDR controller; U-Boot/Linux device trees require minor adjustments
-- RAM: DDR from 0x40000000, ~64MB
-- System clock: 1.152 GHz
-- Chip SID: `12c00001740046207905431c34490f50`
-- UART0: PB8 (pin 54, TX) / PB9 (pin 55, RX) — not broken out to any header
+## Confirmed components
 
-### GOWIN GW1N-LV9MG256C5/I5 (FPGA)
-- GW1N-9 series, 8640 LUT, BGA256, 0.5mm pitch, 8×8mm
-- Handles ADC sampling, FFT, signal generator
-- Bitstream stored on W25N512GV (SPI NAND)
-- Pinout reference: GOWIN document UG114 (MG256 package)
+### Allwinner R11 / V3s-compatible SoC
 
-### Winbond W25Q16JV (SPI NOR, 2MB)
-- Package: SOP-8, 3.3V
-- Contains: BT0/SPL, updater, boot logo, main ARM app, config/calibration
-- Accessible in-circuit via SPI header or via FEL (`xfel spinor`)
+- ARM Cortex-A7, physically marked R11
+- FEL ID `0x00168100`
+- 64 MiB DDR2 at `0x40000000`
+- `xfel ddr v3s` works on the tested unit
+- UART0 PB8/PB9 is not known to be exposed on a header
 
-### Winbond W25N512GV (SPI NAND, 64MB)
-- Package: WSON-8, 3.3V (marking abraded off PCB)
-- Contains: GOWIN FPGA bitstream
-- xfel detects as ID=0xef401500 but does not support read/write
+### GOWIN FPGA
 
-### CSNP1GCR01-B0W (SD-NAND, 1GB)
-- LGA-8, SD protocol, connected to SDC2 controller (PC0–PC3)
-- FAT32 filesystem
-- Holds firmware ISO during update process
+- GW1N-9 family, marked `GW1N-LV9MG256C5/I5`
+- used for acquisition-related logic and generator-related functions
+- exact configuration-storage path remains unconfirmed
 
----
+### W25Q16JV SPI NOR
 
-## Winbond W25Q16JV Flash Map
+- 2 MiB, 3.3 V, SOP-8
+- JEDEC `EF 40 15`
+- connected to the Allwinner SPI0 path
+- contains BT0/SPL, updater, logo, main ARM application and preserved device data
 
-| Offset | Size | Content |
-|--------|------|---------|
-| 0x00000 | 26624B | BT0/SPL (eGON.BT0, checksum 0x05d89244 ✓) |
-| 0x08000 | — | Empty |
-| 0x18000 | 149504B | Updater (eGON.EXE, loads to RAM 0x40000000) |
-| 0x58000 | — | Boot logo (eGON.BMP) |
-| 0xa8000 | 612352B | Main application (eGON.EXE) |
-| 0x13e832 | 36B | Firmware checksum footer (mirrors ISO footer) |
-| 0x1eb000 | — | ADC calibration data |
-| 0x1f3000 | — | Wear-leveling index / version tables |
-| 0x1f5000 | — | Migration magic values (5a5555a5 / a5aa555a …) |
+### CSNP1GCR01-B0W managed NAND
 
----
+- SD-protocol managed NAND
+- connected to **SDC0** through **PF0..PF5**
+- tested unit contains a partition of type `0x06` beginning at LBA 63
+- tested filesystem is FAT16
+- used by the original USB/update environment and by the Custom App loader
 
-## Debug Headers
+### Display and touch
 
-### SPI Flash Header (6-pin 2×3)
+- 1024x600 RGB565 panel
+- Goodix GT911 touch controller
+- GT911: PG6 SDA, PG7 SCL, PE22 INT, PE24 RESET, address `0x5D`
 
-Used for: in-circuit Winbond read/write, FEL entry.
+## Unmarked 8-pin device near the FPGA
 
-```
-[ GND    ] [ GND   ]   ← top row (towards PCB edge)
-[ 3.3V  ] [ RESET  ]   P56 VCC-IO3 / P94
-[ SPI CS ] [ SPI CLK]  PC2 (P60)   / PC1 (P59)
-[ MISO  ] [ MOSI   ]   PC0 (P58)   / PC3 (P61)
-```
+The device was previously documented as a Winbond W25N512GV SPI NAND containing the FPGA bitstream. That identification is **not confirmed** and must not be treated as fact.
 
-**FEL entry:** Short SPI CS to GND at power-on.  
-Wire can be released immediately after power-on; FEL stays active via USB.
+Why the old identification was withdrawn:
 
-**T48 in-circuit read:** Connect MISO/CLK/CS/MOSI to T48, hold RESET low.
+- `EF 40 15` is the confirmed JEDEC ID of the 2 MiB W25Q16JV NOR
+- `xfel spinand` returning those bytes does not prove a second SPI-NAND device
+- the chip marking is absent
+- activity observed on the nearby four-pin header is two-wire and I2C-like during normal operation
 
-### FPGA JTAG Header (6-pin 2×3)
+Observed by another researcher:
 
-Used for: GowinEDA or openFPGALoader bitstream read/write.
+- two signal lines plus power/ground on the nearby header
+- runtime traffic that can be partly decoded as address 0 with short repeated transfers
+- power-on traffic with less conventional timing
 
-```
-[ GND   ] [ GND   ]   ← top row
-[ 3.3V  ] [ 1.1V  ]   P56 VCC-IO3 / P69 VDD-SYS
-[ TCK   ] [ TDI   ]   GOWIN pin 17 / pin 19
-[ TDO   ] [ TMS   ]   GOWIN pin 20 / pin 16
+Still unconfirmed:
+
+- device type and exact pinout
+- whether the FPGA is the bus master
+- whether the traffic is standards-compliant I2C
+- whether the device stores configuration, calibration or authentication data
+- any relationship with `SMEC_Init()` or `smec.v`
+
+The GW1N family is non-volatile, so internal FPGA configuration storage is a viable hypothesis, not a confirmed conclusion.
+
+## W25Q16JV map
+
+```text
+0x000000..0x0067FF  eGON.BT0 / original or custom Stage 1
+0x018000..0x03C7FF  original EXE1 / USB updater
+0x058000             original logo block region
+0x0A8000             original EXE2 header/application region
+0x1DB000..0x1EAFFF  custom Stage 2 slot
+0x1EB000..0x1EEFFF  calibration/configuration, preserve
+0x1F0000..0x1FDFFF  metadata/version/configuration, preserve
 ```
 
-Pin 18 (SCLK) is not connected.  
-Pinout verified against GOWIN LQ176 package table (pins 16/17/19/20 = TMS/TCK/TDI/TDO).  
-Requires FT2232H or FT232H adapter (MPSSE capable) for openFPGALoader.
+Offsets not explicitly allocated must be preserved. All-`0xFF` data is not sufficient evidence that a region is generally free.
 
-### 4-pin Header (unconfirmed)
+## Debug headers
 
-- GND + 3.3V (stable from battery)
-- Two pins measuring 1.5–2.6V during boot
-- Suspected USB D+/D− (both pins show identical output at any baud rate)
-- Not UART — further investigation needed
+### SPI/FEL header
 
----
+The SPI header exposes the W25Q16 signals and reset. Shorting SPI CS to ground during power-on forces FEL on the tested unit. Keep a full backup before any write.
 
-## Boot Sequence
+### FPGA JTAG header
 
-```
-BT0/SPL (Winbond 0x00000)
-  → sys_clock_init (1.152 GHz)
-  → sys_mmu_init
-  → System_Init
-  → spi_flash_init (SPI0)
-  → Load main app (Winbond 0xa8000 → RAM 0x40000000)
-  → Jump to main app
+A nearby 2x3 header is believed to expose GOWIN JTAG signals, but package-pin claims and tool compatibility should remain qualified until a complete trace and successful transaction are documented.
 
-Main app (RAM 0x40000000)
-  → FPGA_Start
-  → GUI_Init
-  → GT911_Init (touch)
-  → while(1) { TP_ScanMain, Key_ControlHandle, Win_DisplayHandle }
-```
+### Four-pin header near FPGA
 
-Bare-metal application — no Linux, no RTOS.
+Not UART. Current captures show two-wire I2C-like activity during normal operation. See the unmarked-device section above.
 
----
+## Original EXE2 startup flow
 
-## Key Function Addresses (RAM)
+Confirmed call sequence around the application startup:
 
-| Function | Address |
-|----------|---------|
-| main() init | 0x40034700 |
-| sys_clock_init | 0x4004282c |
-| FPGA_Start | 0x400344e0 |
-| GUI_Init | 0x40049a74 |
-| GT911_Init | 0x4003d454 |
-| CheckAndUpdateNewSystem | 0x40051cf0 |
-| FactoryCheck | 0x4003e708 |
-
-
-### GT911 touch controller pinout
-
-Confirmed by PCB continuity tracing and original firmware analysis:
-
-| Signal | R11 pin |
-|--------|---------|
-| SDA | PG6 |
-| SCL | PG7 |
-| INT | PE22 |
-| RST | PE24 |
-| I2C address | 0x5D |
-
-## Display
-
-| Parameter | Value | Source |
-|-----------|-------|--------|
-| Size | 7 inch | Product spec |
-| Resolution | 1024 × 600 px | Product spec (IPS) |
-| Interface | RGB565 parallel | SPL analysis |
-| Connector | 50-pin FFC | Physical inspection |
-| Touch | GT911 capacitive (separate smaller FFC) | PCB continuity tracing |
-| Display module | HT070-RGB-50PIN-03 (HTdisplay) | Label on FFC cable |
-
-### Timing (from SPL timing table at 0x6720)
-
-| Parameter | Value |
-|-----------|-------|
-| H_ACTIVE | 1024 |
-| H_BP | 160 |
-| H_FP | 163 |
-| H_SYNC | 1 |
-| H_TOTAL | 1348 |
-| V_ACTIVE | 600 |
-| V_BP | 12 |
-| V_FP | 23 |
-| V_SYNC | 1 |
-| V_TOTAL | 636 |
-| PLL_VIDEO | 324 MHz (N=80, M=5) |
-| DCLK divisor | 8 → 40.5 MHz pixel clock |
-| Refresh rate | ~47 Hz |
-
-### DE2 configuration (working bare-metal setup)
-
-- **DE2 channel**: Channel 2 (MIXER_BASE + 0x4000)
-- **BLD_ROUTE**: 2 (pipe 0 → channel 2)
-- **Format**: RGB565 (attr = 0x0a01, no UI_SEL bit)
-- **Stride**: 2048 bytes (1024 × 2)
-- **Framebuffer**: 0x43000000 (1024×600×2 = 1,228,800 bytes)
-- **GLB_SIZE / BLD_OUTPUT_SIZE**: (599<<16)|1023 = active area 1024×600
-- **Channel size**: same as active area
-
-### Port D pinmux
-
-PD0-PD23 must be configured as LCD function (function 2) before TCON0 output:
-
-```c
-writel(0x22222222, PD_CFG0);  // PD0-PD7
-writel(0x22222222, PD_CFG1);  // PD8-PD15
-writel(0x22222222, PD_CFG2);  // PD16-PD23
+```text
+sys_clock_init
+sys_mmu_init
+System_Init
+AllInfoInit
+spi_flash_init
+GetSysSavedInfo
+LanguageInit
+FPGA_Start
+GUI_Init
+GT911_Init
+Win_Init
+UI_ColorInit
+FatFsInit
+SMEC_Init
+PowerInit
+HorizontalInit
+VerticalInit
+HardCostTimeInfoInit
+Gen_Init
+CheckAndUpdateNewSystem
+FactoryCheck
+SysConfigExec
 ```
 
-### Boot logo
+Key confirmed addresses:
 
-The updater displays a 529×95px RGB565 logo centered on the 1024×600 display.
-Horizontal margins: (1024-529)/2 = 247px blue background on each side.
+```text
+main                    0x40034700
+FPGA_Start              0x40049188
+GUI_Init                0x400344E0
+GT911_Init              0x40049A74
+SMEC_Init               0x4004A15C
+CheckAndUpdateNewSystem 0x4004F134
+FactoryCheck            0x40051CF0
+SysConfigExec           0x4003E708
+```
 
+The earlier address table shifted several names by one call and is superseded by this sequence.
